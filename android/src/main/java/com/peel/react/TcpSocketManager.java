@@ -7,6 +7,8 @@ import com.koushikdutta.async.AsyncNetworkSocket;
 import com.koushikdutta.async.AsyncServer;
 import com.koushikdutta.async.AsyncServerSocket;
 import com.koushikdutta.async.AsyncSocket;
+import com.koushikdutta.async.AsyncSSLSocket;
+import com.koushikdutta.async.AsyncSSLSocketWrapper;
 import com.koushikdutta.async.ByteBufferList;
 import com.koushikdutta.async.DataEmitter;
 import com.koushikdutta.async.Util;
@@ -21,6 +23,13 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 
+import javax.net.ssl.*;
+import javax.net.ssl.SSLEngineResult.*;
+import java.io.*;
+import java.security.*;
+import java.nio.*;
+
+
 /**
  * Created by aprock on 12/29/15.
  */
@@ -30,10 +39,18 @@ public final class TcpSocketManager {
     private WeakReference<TcpSocketListener> mListener;
     private AsyncServer mServer = AsyncServer.getDefault();
 
+    private static String SSL = "SSL";
+
     private int mInstances = 5000;
+
+    private SSLContext context;
 
     public TcpSocketManager(TcpSocketListener listener) throws IOException {
         mListener = new WeakReference<TcpSocketListener>(listener);
+        try {
+            context = SSLContext.getDefault();
+        } catch (Exception ex) {
+        }
     }
 
     private void setSocketCallbacks(final Integer cId, final AsyncSocket socket) {
@@ -119,7 +136,48 @@ public final class TcpSocketManager {
         });
     }
 
-    public void connect(final Integer cId, final @Nullable String host, final Integer port) throws UnknownHostException, IOException {
+    private void connectRAW(final AsyncSocket socket, final InetSocketAddress socketAddress, final Integer cId, final @Nullable String host, final Integer port) {
+        final TcpSocketListener listener = mListener.get();
+        mClients.put(cId, socket);
+        setSocketCallbacks(cId, socket);
+
+        if (listener != null) {
+            listener.onConnect(cId, socketAddress);
+        }
+    }
+
+    private void connectSSL(final AsyncSocket socket, final InetSocketAddress socketAddress, final Integer cId, final @Nullable String host, final Integer port) {
+        final SSLEngine engine = context.createSSLEngine();
+        AsyncSSLSocketWrapper.handshake(socket, host, port, engine, null, null, true, new AsyncSSLSocketWrapper.HandshakeCallback() {
+            @Override
+            public void onHandshakeCompleted(Exception e, final AsyncSSLSocket socket) {
+                final TcpSocketListener listener = mListener.get();
+                if (e != null) {
+                    if (listener != null) {
+                        listener.onError(cId, e.getMessage());
+                    }
+                    return;
+                } 
+
+                // There appears to be a bug in AsyncSSLSocketWrapper where it deletes the Closed callback right after calling
+                // onHandshakeCompleted, making it impossible to set the Closed callback in process here. So we cheat and
+                // add an intentional post thread to handle it.
+                socket.getServer().post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mClients.put(cId, socket);
+                        setSocketCallbacks(cId, socket);
+
+                        if (listener != null) {
+                            listener.onConnect(cId, socketAddress);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    public void connect(final Integer cId, final @Nullable String host, final Integer port, final @Nullable String protocol) throws UnknownHostException, IOException {
         // resolve the address
         final InetSocketAddress socketAddress;
         if (host != null) {
@@ -131,17 +189,19 @@ public final class TcpSocketManager {
         mServer.connectSocket(socketAddress, new ConnectCallback() {
             @Override
             public void onConnectCompleted(Exception ex, AsyncSocket socket) {
-              TcpSocketListener listener = mListener.get();
-                if (ex == null) {
-                    mClients.put(cId, socket);
-                    setSocketCallbacks(cId, socket);
+              if (ex != null) {
+                  final TcpSocketListener listener = mListener.get();
+                  if (listener != null) {
+                      listener.onError(cId, ex.getMessage());
+                  }
+                  return;
+              }
 
-                    if (listener != null) {
-                        listener.onConnect(cId, socketAddress);
-                    }
-                } else if (listener != null) {
-                   listener.onError(cId, ex.getMessage());
-                }
+              if (protocol != null && SSL.equalsIgnoreCase(protocol)) {
+                  connectSSL(socket, socketAddress, cId, host, port);
+              } else {
+                  connectRAW(socket, socketAddress, cId, host, port);
+              }
             }
         });
     }

@@ -5,6 +5,7 @@
 
 package com.peel.react;
 
+import com.facebook.common.logging.FLog;
 import com.facebook.react.ReactPackage;
 import com.facebook.react.bridge.JavaScriptModule;
 import com.facebook.react.bridge.NativeModule;

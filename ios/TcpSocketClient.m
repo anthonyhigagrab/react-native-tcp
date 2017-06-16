@@ -69,6 +69,7 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 
     NSString *localAddress = (options?options[@"localAddress"]:nil);
     NSNumber *localPort = (options?options[@"localPort"]:nil);
+    NSString *protocol = (options?options[@"protocol"]:nil);
 
     if (!localAddress && !localPort) {
         result = [_tcpSocket connectToHost:host onPort:port error:error];
@@ -83,6 +84,11 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
                               viaInterface:[interface componentsJoinedByString:@":"]
                                withTimeout:-1
                                      error:error];
+    }
+
+    if (result && [@"ssl" caseInsensitiveCompare:protocol] == NSOrderedSame) {
+        NSMutableDictionary *settings = [[NSMutableDictionary alloc] init];
+        [_tcpSocket startTLS:settings];
     }
 
     return result;
