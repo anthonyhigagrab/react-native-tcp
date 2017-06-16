@@ -1,4 +1,4 @@
-# TCP in React Native
+# TCP and SSL in React Native
 
 node's [net](https://nodejs.org/api/net.html) API in React Native
 
